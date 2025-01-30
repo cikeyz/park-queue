@@ -40,7 +40,7 @@ class GarageSystem {
 
         // If car is at exit, simply remove it
         if (carIndex === 0) {
-        this.parkingQueue.shift();
+            this.parkingQueue.shift();
             this.totalCounters.departureCount++;
             this.carCounters[plateNumber] = (this.carCounters[plateNumber] || 0) + 1;
             return { 
@@ -50,20 +50,22 @@ class GarageSystem {
             };
         }
 
-        // If car is not at exit, we need to move cars in front of it
-        const carsToMove = this.parkingQueue.slice(0, carIndex);
-        this.circlingCars = [...carsToMove];
+        // If car is not at exit, we need to move cars in front of it temporarily
+        const carsInFront = this.parkingQueue.slice(0, carIndex);
+        const carsInBack = this.parkingQueue.slice(carIndex + 1);
         
-        // Remove cars that need to circle and the departing car
-        this.parkingQueue.splice(0, carIndex + 1);
+        // Store circling cars and update the parking queue
+        this.circlingCars = [...carsInFront];
         
-        // Add circling cars back to the queue
-        this.parkingQueue.push(...carsToMove);
+        // Create new queue: back cars first (they move forward), then front cars (they re-enter at back)
+        this.parkingQueue = [...carsInBack, ...carsInFront];
         
         // Update counters
         this.totalCounters.departureCount++;
         this.carCounters[plateNumber] = (this.carCounters[plateNumber] || 0) + 1;
-        carsToMove.forEach(car => {
+        
+        // Count movements for circling cars
+        carsInFront.forEach(car => {
             this.carCounters[car] = (this.carCounters[car] || 0) + 2; // +2 for exit and re-entry
             this.totalCounters.arrivalCount++;
             this.totalCounters.departureCount++;
@@ -72,7 +74,8 @@ class GarageSystem {
         return { 
             success: true, 
             message: `Car with plate number ${plateNumber} has departed.`,
-            carsToCircle: carsToMove
+            carsToCircle: carsInFront,
+            remainingCars: carsInBack
         };
     }
 
@@ -248,28 +251,30 @@ class ParkingGarageUI {
             }
         }
 
-        // Move remaining cars down
-        const promises = [];
-        const startIndex = 8 - (result.carsToCircle ? result.carsToCircle.length : 0);
-        for (let i = startIndex; i >= this.garage.MAX_CAPACITY - this.garage.parkingQueue.length; i--) {
-            const currentSpot = this.garageQueue.children[i];
-            const nextSpot = this.garageQueue.children[i + 1];
-            
-            if (currentSpot.classList.contains('occupied')) {
-                currentSpot.classList.add('shifting');
-                promises.push(new Promise(resolve => {
-                    currentSpot.addEventListener('animationend', () => {
-                        currentSpot.classList.remove('shifting', 'occupied');
-                        nextSpot.classList.add('occupied');
-                        nextSpot.textContent = currentSpot.textContent;
-                        currentSpot.textContent = '';
-                        resolve();
-                    }, { once: true });
-                }));
+            // Animate remaining cars moving up
+            if (result.remainingCars && result.remainingCars.length > 0) {
+                const promises = [];
+                for (let i = carIndex; i < this.garage.parkingQueue.length - result.carsToCircle.length; i++) {
+                    const spot = this.garageQueue.children[9 - i];
+                    if (spot) {
+                        const nextSpot = this.garageQueue.children[9 - (i - 1)];
+                        if (nextSpot) {
+                            spot.classList.add('shifting');
+                            promises.push(new Promise(resolve => {
+                                spot.addEventListener('animationend', () => {
+                                    spot.classList.remove('shifting');
+                                    spot.classList.remove('occupied');
+                                    nextSpot.classList.add('occupied');
+                                    nextSpot.textContent = spot.textContent;
+                                    spot.textContent = '';
+                                    resolve();
+                                }, { once: true });
+                            }));
+                        }
+                    }
+                }
+                await Promise.all(promises);
             }
-        }
-        
-        await Promise.all(promises);
         return result;
     }
 
@@ -361,7 +366,6 @@ class ParkingGarageUI {
         if (result.success) {
             await this.animateCarEntry(plateNumber);
             this.showNotice(result.message);
-            this.updateExplanationPane(`Car with plate number ${plateNumber} parked using FIFO (First In, First Out) strategy.`);
         } else {
             this.showNotice(result.message, true);
         }
@@ -385,10 +389,11 @@ class ParkingGarageUI {
         
         if (result.success) {
             this.showNotice(result.message);
-            this.updateExplanationPane(`Car with plate number ${plateNumber} removed using FIFO (First In, First Out) strategy.`);
         } else {
             this.showNotice(result.message, true);
         }
+        
+        this.plateInput.value = '';
         
         this.plateInput.value = '';
         this.updateUI();
@@ -457,4 +462,4 @@ function updateNotice(message) {
     } else {
         noticeMessage.textContent = 'No current notices';
     }
-} 
+}
